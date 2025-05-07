@@ -1,0 +1,35 @@
+Type: Package
+Package: iseqr
+Title: iSeqR: A Tidy and Integrated Interface for Public Sequencing Data Retrieval
+Version: 0.1.0
+Authors@R: c(
+    person("Songqi", "Duan", , "duan@songqi.org", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-0822-5883"))
+  )
+Description: iSeqR provides an integrated and user-friendly interface for accessing
+    and retrieving public high-throughput sequencing datasets from major repositories,
+    including GEO (Gene Expression Omnibus), SRA (Sequence Read Archive), and ENA
+    (European Nucleotide Archive). The package enables users to search for studies,
+    extract and standardize metadata, filter samples based on experimental conditions,
+    and download raw sequencing data (such as FASTQ or SRA files) in a reproducible and
+    automated manner. It supports accession conversion, batch processing, and shell
+    command integration for large-scale workflows, with functions designed following
+    tidyverse principles. iSeqR facilitates reproducible research and scalable data
+    acquisition, making it especially useful for bioinformatics projects involving
+    meta-analysis, method benchmarking, or public dataset reuse.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports: 
+    cli,
+    dplyr,
+    fs,
+    httr,
+    magrittr,
+    processx,
+    purrr,
+    readr,
+    rlang,
+    stringr,
+    xml2
