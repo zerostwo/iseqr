@@ -190,6 +190,7 @@ iseq_download <- function(input,
         meta_df <- readr::read_csv(metadata_file, show_col_types = FALSE)
         if(!run_col_gsa %in% names(meta_df)) cli::cli_abort("Cannot find run column {.val {run_col_gsa}} in GSA metadata.")
         run_list_df <- meta_df %>% distinct(across(all_of(run_col_gsa)), .keep_all = TRUE) # Keep all columns for the distinct runs
+        run_list_df$CRA_ID <- accession
       } else { # ENA/SRA
         run_col_ena <- "run_accession" # Adjust if needed
         meta_df <- readr::read_tsv(metadata_file, show_col_types = FALSE)
@@ -214,7 +215,6 @@ iseq_download <- function(input,
     })
     if (is.null(metadata_file)) next # Skip to next accession if metadata failed
 
-
     processed_metadata_files[[accession]] <- metadata_file
 
     # 2. Skip Download if requested
@@ -225,7 +225,7 @@ iseq_download <- function(input,
 
 
     # 3. Download and Process Runs
-    runs_to_process <- if(metadata_source=="GSA") run_list_df$`Run Accession` else run_list_df$run_accession
+    runs_to_process <- if(metadata_source=="GSA") run_list_df$Run else run_list_df$run_accession
     all_runs_successful <- TRUE
     final_run_files <- list() # Store final state of files for each run (e.g., path to .fastq.gz)
 

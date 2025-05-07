@@ -201,7 +201,7 @@ download_ena_sra_run <- function(run_id, run_info, download_fastq_gz = TRUE, use
       tryCatch({
         if (download_mode == "Aspera") {
           # Aspera link format is usually like: era-fasp@fasp.sra.ebi.ac.uk:/vol1/fastq/SRR...
-          execute_aspera(remote_path = link, db = "ENA", software_paths = software_paths,
+          execute_aspera(remote_path = glue::glue("era-fasp@{link}"), db = "ENA", software_paths = software_paths,
                          aspera_key_path = aspera_key_path, output_dir = output_dir)
         } else {
           # FTP link format: ftp.sra.ebi.ac.uk/vol1/fastq/SRR...
@@ -382,10 +382,11 @@ download_gsa_run <- function(run_id, run_info, use_aspera = FALSE, parallel_n = 
   # This is less reliable than scraping but avoids complex scraping logic initially.
 
   # Alternative: Replicate scraping logic (more robust if website is stable)
-  cra_id <- run_info$`BioProject Accession` # Assuming this column exists and holds CRA
+  cra_id <- run_info$CRA_ID # Assuming this column exists and holds CRA
   if(is.null(cra_id)) {
     cli::cli_abort("Could not determine CRA ID from GSA metadata for run {.val {run_id}}.")
   }
+  # https://download.cncb.ac.cn/gsa/CRA001160/CRR034520/
   run_page_url <- paste0("https://ngdc.cncb.ac.cn/gsa/browse/", cra_id, "/", run_id)
   cli::cli_alert_info("Scraping GSA run page for download links: {.url {run_page_url}}")
 
@@ -414,6 +415,7 @@ download_gsa_run <- function(run_id, run_info, use_aspera = FALSE, parallel_n = 
   links_to_try <- list()
   download_mode <- NULL
 
+  # TODO: Add default download mode, download_mode
   if (length(huawei_links) > 0) {
     links_to_try <- huawei_links
     download_mode <- "Huawei Cloud (HTTPS)"
