@@ -19,9 +19,9 @@ validate_ena_sra_run <- function(run_id, downloaded_info, run_info, software_pat
   if (downloaded_info$type == "sra") {
     sra_file <- downloaded_info$files[1] # Should only be one SRA file
     cli::cli_alert_info("Validating SRA file using {.val vdb-validate}: {.path {sra_file}}")
-    if (is.null(software_paths$'vdb_validate')) {
-      software_paths$'vdb_validate' <- get_software_path("vdb_validate", "sra-tools", required=TRUE)
-      if(is.null(software_paths$'vdb_validate')) {
+    if (is.null(software_paths$"vdb_validate")) {
+      software_paths$"vdb_validate" <- get_software_path("vdb_validate", "sra-tools", required = TRUE)
+      if (is.null(software_paths$"vdb_validate")) {
         cli::cli_alert_warning("Cannot find {.val vdb-validate}, skipping SRA validation for {.val {run_id}}.")
         return(TRUE) # Skip validation but assume success if tool missing? Risky. Maybe FALSE? Let's warn and skip (return TRUE).
       }
@@ -30,9 +30,11 @@ validate_ena_sra_run <- function(run_id, downloaded_info, run_info, software_pat
     on.exit(fs::file_delete(log_file), add = TRUE)
 
     # Run vdb-validate, capturing output/status
-    res <- run_command(software_paths$'vdb_validate', args = sra_file,
-                       error_on_status = FALSE, # Check status manually
-                       stdout = log_file, stderr = log_file) # Capture output
+    res <- run_command(software_paths$"vdb_validate",
+      args = sra_file,
+      error_on_status = FALSE, # Check status manually
+      stdout = log_file, stderr = log_file
+    ) # Capture output
 
     if (res$status == 0) {
       cli::cli_alert_success("vdb-validate successful for {.val {run_id}}.")
@@ -41,10 +43,9 @@ validate_ena_sra_run <- function(run_id, downloaded_info, run_info, software_pat
     } else {
       cli::cli_alert_danger("vdb-validate failed for {.val {run_id}} (exit code: {res$status}). See details below.")
       log_content <- readr::read_lines(log_file)
-      cli::cli_verbatim(paste(log_content, collapse="\n"))
+      cli::cli_verbatim(paste(log_content, collapse = "\n"))
       return(FALSE)
     }
-
   } else if (downloaded_info$type == "fastq_gz") {
     cli::cli_alert_info("Validating FASTQ.gz file(s) using MD5 checksums for {.val {run_id}}...")
     # Check MD5s from metadata ('fastq_md5' column)
@@ -66,9 +67,9 @@ validate_ena_sra_run <- function(run_id, downloaded_info, run_info, software_pat
     # Use R's internal md5sum or external command
     use_external_md5sum <- TRUE # Default to external for potentially better performance
     md5sum_path <- NULL
-    if(use_external_md5sum) {
+    if (use_external_md5sum) {
       md5sum_path <- get_software_path("md5sum", "coreutils", required = FALSE)
-      if(is.null(md5sum_path)) {
+      if (is.null(md5sum_path)) {
         cli::cli_alert_info("External {.val md5sum} not found, using R's {.fun tools::md5sum}.")
         use_external_md5sum <- FALSE
       }
@@ -88,18 +89,21 @@ validate_ena_sra_run <- function(run_id, downloaded_info, run_info, software_pat
       cli::cli_inform("Calculating MD5 for: {.path {file_to_check}}")
       id <- cli::cli_status("Calculating MD5...")
 
-      calculated_md5 <- tryCatch({
-        if (use_external_md5sum) {
-          res <- run_command(md5sum_path, args = file_to_check, error_on_status = TRUE, spinner = FALSE)
-          tolower(str_split(str_trim(res$stdout), "\\s+")[[1]][1]) # Extract first part, lowercase
-        } else {
-          tools::md5sum(file_to_check) # Returns named vector
+      calculated_md5 <- tryCatch(
+        {
+          if (use_external_md5sum) {
+            res <- run_command(md5sum_path, args = file_to_check, error_on_status = TRUE, spinner = FALSE)
+            tolower(str_split(str_trim(res$stdout), "\\s+")[[1]][1]) # Extract first part, lowercase
+          } else {
+            tools::md5sum(file_to_check) # Returns named vector
+          }
+        },
+        error = function(e) {
+          cli::cli_status_clear(id)
+          cli::cli_alert_danger("Failed to calculate MD5 for {.path {file_to_check}}: {e$message}")
+          return(NULL)
         }
-      }, error = function(e) {
-        cli::cli_status_clear(id)
-        cli::cli_alert_danger("Failed to calculate MD5 for {.path {file_to_check}}: {e$message}")
-        return(NULL)
-      })
+      )
       cli::cli_status_clear(id)
 
       if (is.null(calculated_md5)) {
@@ -123,7 +127,6 @@ validate_ena_sra_run <- function(run_id, downloaded_info, run_info, software_pat
     }
 
     return(all_match)
-
   } else {
     cli::cli_alert_warning("Unknown download type '{downloaded_info$type}' for validation of {.val {run_id}}.")
     return(FALSE) # Cannot validate unknown type
@@ -150,7 +153,7 @@ validate_gsa_run <- function(run_id, downloaded_info, run_info, output_dir = "."
 
   # 1. Get the CRA to find the corresponding md5sum.txt file
   cra_id <- run_info$`BioProject Accession` # Assuming this column exists
-  if(is.null(cra_id)) {
+  if (is.null(cra_id)) {
     cli::cli_alert_warning("Could not determine CRA ID from GSA metadata for run {.val {run_id}}. Skipping MD5 validation.")
     return(TRUE) # Assume success? Or fail? Let's skip (TRUE).
   }
@@ -163,17 +166,17 @@ validate_gsa_run <- function(run_id, downloaded_info, run_info, output_dir = "."
     # Try to guess base path from run_info 'ftpFile' if possible, otherwise default structure.
     base_url <- "https://download.cncb.ac.cn/"
     relative_path <- NULL
-    if("ftpFile" %in% names(run_info) && !is.na(run_info$ftpFile) && run_info$ftpFile != "") {
+    if ("ftpFile" %in% names(run_info) && !is.na(run_info$ftpFile) && run_info$ftpFile != "") {
       # Example ftpFile: /gsa/CRA000001/CRR... or /gsahuman/CRA...
       first_file_path <- str_split(run_info$ftpFile, "[|]")[[1]][1]
       # Extract the part like 'gsa/CRA...' or 'gsahuman/CRA...'
       match <- stringr::str_match(first_file_path, "(/(gsa|gsa-human|gsa-plant)/CRA[0-9]+)/")
-      if(!is.na(match[1,2])) {
-        relative_path <- stringr::str_sub(match[1,2], 2) # Remove leading '/'
+      if (!is.na(match[1, 2])) {
+        relative_path <- stringr::str_sub(match[1, 2], 2) # Remove leading '/'
       }
     }
     # Fallback guess if path extraction failed
-    if(is.null(relative_path)) {
+    if (is.null(relative_path)) {
       # Basic guess, might be wrong for gsa-human etc.
       relative_path <- paste0("gsa/", cra_id)
       cli::cli_alert_warning("Could not reliably determine GSA path, guessing: {.path {relative_path}}")
@@ -182,32 +185,38 @@ validate_gsa_run <- function(run_id, downloaded_info, run_info, output_dir = "."
     md5_url <- paste0(base_url, relative_path, "/md5sum.txt")
     cli::cli_inform("Attempting to download from: {.url {md5_url}}")
 
-    tryCatch({
-      resp <- httr::GET(md5_url, httr::write_disk(md5sum_file, overwrite = TRUE), httr::timeout(60))
-      # Check if file downloaded and is not empty
-      if (!fs::file_exists(md5sum_file) || fs::file_size(md5sum_file) == 0) {
-        # Try alternative common path (e.g., gsa-human if first guess was gsa) - this gets complex
-        # For now, just report failure if first attempt fails.
-        stop(paste("Download failed or resulted in empty file. Status:", httr::status_code(resp)))
+    tryCatch(
+      {
+        resp <- httr::GET(md5_url, httr::write_disk(md5sum_file, overwrite = TRUE), httr::timeout(60))
+        # Check if file downloaded and is not empty
+        if (!fs::file_exists(md5sum_file) || fs::file_size(md5sum_file) == 0) {
+          # Try alternative common path (e.g., gsa-human if first guess was gsa) - this gets complex
+          # For now, just report failure if first attempt fails.
+          stop(paste("Download failed or resulted in empty file. Status:", httr::status_code(resp)))
+        }
+        cli::cli_alert_success("Downloaded MD5 checksum file to {.path {md5sum_file}}")
+      },
+      error = function(e) {
+        cli::cli_alert_warning("Failed to download GSA MD5 checksum file for {.val {cra_id}}: {e$message}")
+        if (fs::file_exists(md5sum_file)) fs::file_delete(md5sum_file) # Clean up failed download
+        cli::cli_alert_warning("Skipping MD5 validation for GSA run {.val {run_id}}.")
+        return(TRUE) # Skip validation if checksum file unavailable
       }
-      cli::cli_alert_success("Downloaded MD5 checksum file to {.path {md5sum_file}}")
-    }, error = function(e) {
-      cli::cli_alert_warning("Failed to download GSA MD5 checksum file for {.val {cra_id}}: {e$message}")
-      if(fs::file_exists(md5sum_file)) fs::file_delete(md5sum_file) # Clean up failed download
-      cli::cli_alert_warning("Skipping MD5 validation for GSA run {.val {run_id}}.")
-      return(TRUE) # Skip validation if checksum file unavailable
-    })
+    )
   }
 
   # 3. Read the md5sum file
-  md5_data <- tryCatch({
-    readr::read_delim(md5sum_file, delim = " ", col_names = c("md5", "filename"), trim_ws = TRUE, skip_empty_rows = TRUE, col_types = "cc") %>%
-      mutate(filename = str_remove(filename, "^\\*")) %>% # Remove leading '*' if present
-      filter(!is.na(md5), !is.na(filename)) # Ensure valid rows
-  }, error = function(e) {
-    cli::cli_alert_warning("Failed to read or parse GSA MD5 checksum file {.path {md5sum_file}}: {e$message}")
-    return(NULL)
-  })
+  md5_data <- tryCatch(
+    {
+      readr::read_delim(md5sum_file, delim = " ", col_names = c("md5", "filename"), trim_ws = TRUE, skip_empty_rows = TRUE, col_types = "cc") %>%
+        mutate(filename = str_remove(filename, "^\\*")) %>% # Remove leading '*' if present
+        filter(!is.na(md5), !is.na(filename)) # Ensure valid rows
+    },
+    error = function(e) {
+      cli::cli_alert_warning("Failed to read or parse GSA MD5 checksum file {.path {md5sum_file}}: {e$message}")
+      return(NULL)
+    }
+  )
 
   if (is.null(md5_data) || nrow(md5_data) == 0) {
     cli::cli_alert_warning("GSA MD5 checksum file is empty or invalid. Skipping MD5 validation for {.val {run_id}}.")
@@ -218,9 +227,9 @@ validate_gsa_run <- function(run_id, downloaded_info, run_info, output_dir = "."
   cli::cli_alert_info("Validating GSA file(s) using MD5 checksums for {.val {run_id}}...")
   use_external_md5sum <- TRUE
   md5sum_path <- NULL
-  if(use_external_md5sum) {
+  if (use_external_md5sum) {
     md5sum_path <- get_software_path("md5sum", "coreutils", required = FALSE)
-    if(is.null(md5sum_path)) {
+    if (is.null(md5sum_path)) {
       cli::cli_alert_info("External {.val md5sum} not found, using R's {.fun tools::md5sum}.")
       use_external_md5sum <- FALSE
     }
@@ -247,18 +256,21 @@ validate_gsa_run <- function(run_id, downloaded_info, run_info, output_dir = "."
     cli::cli_inform("Calculating MD5 for: {.path {file_to_check}}")
     id <- cli::cli_status("Calculating MD5...")
 
-    calculated_md5 <- tryCatch({
-      if (use_external_md5sum) {
-        res <- run_command(md5sum_path, args = file_to_check, error_on_status = TRUE, spinner = FALSE)
-        tolower(str_split(str_trim(res$stdout), "\\s+")[[1]][1])
-      } else {
-        tools::md5sum(file_to_check)
+    calculated_md5 <- tryCatch(
+      {
+        if (use_external_md5sum) {
+          res <- run_command(md5sum_path, args = file_to_check, error_on_status = TRUE, spinner = FALSE)
+          tolower(str_split(str_trim(res$stdout), "\\s+")[[1]][1])
+        } else {
+          tools::md5sum(file_to_check)
+        }
+      },
+      error = function(e) {
+        cli::cli_status_clear(id)
+        cli::cli_alert_danger("Failed to calculate MD5 for {.path {file_to_check}}: {e$message}")
+        return(NULL)
       }
-    }, error = function(e) {
-      cli::cli_status_clear(id)
-      cli::cli_alert_danger("Failed to calculate MD5 for {.path {file_to_check}}: {e$message}")
-      return(NULL)
-    })
+    )
     cli::cli_status_clear(id)
 
     if (is.null(calculated_md5)) {
@@ -280,5 +292,3 @@ validate_gsa_run <- function(run_id, downloaded_info, run_info, output_dir = "."
 
   return(all_match)
 }
-
-

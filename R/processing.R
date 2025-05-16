@@ -1,5 +1,26 @@
 # --- Post-processing Functions (processing.R) ---
 
+# Count lines in a file (FASTQ, possibly gzipped)
+count_lines <- function(file) {
+  if (grepl("\\.gz$", file)) {
+    as.integer(system2("zcat", shQuote(file), stdout = TRUE) |> length())
+  } else {
+    system2("wc", c("-l", shQuote(file)), stdout = TRUE) |>
+      strsplit("\\s+") |>
+      unlist() |>
+      (\(x) x[1])() |>
+      as.integer()
+  }
+}
+
+# Check all files are multiple of 4 and have equal line count
+check_fastq_integrity <- function(files) {
+  lines <- purrr::map_int(files, count_lines)
+
+  valid <- all(lines %% 4 == 0) && length(unique(lines)) == 1
+  list(valid = valid, lines = lines)
+}
+
 #' Convert SRA to FASTQ using fasterq-dump
 #'
 #' @param sra_file Path to the SRA file.
@@ -10,48 +31,71 @@
 #' @keywords internal
 convert_sra_to_fastq <- function(sra_file, output_dir = ".", threads = 8, software_paths) {
   run_id <- fs::path_ext_remove(fs::path_file(sra_file))
+  cli::cli_alert_info("Checking existing FASTQ for {.val {run_id}}...")
+
+  fastq_pattern <- paste0(run_id, "*.fastq")
+  generated_files <- fs::dir_ls(
+    path = output_dir,
+    regexp = fastq_pattern
+  )
+
+  if (length(generated_files) > 0) {
+    cli::cli_alert_info("Found existing FASTQ file(s) for {.val {run_id}}, validating integrity...")
+
+    integrity <- check_fastq_integrity(generated_files)
+
+    if (!integrity$valid) {
+      cli::cli_alert_warning("FASTQ files for {.val {run_id}} failed integrity check (line count issue). Re-generating...")
+      fs::file_delete(generated_files)
+    } else {
+      cli::cli_alert_success("FASTQ files passed integrity check (all files: {integrity$lines[1]} lines).")
+      cli::cli_ul(generated_files)
+      return(generated_files)
+    }
+  }
+
   cli::cli_alert_info("Converting SRA {.val {run_id}} to FASTQ using {.val fasterq-dump}...")
 
-  if (is.null(software_paths$'fasterq_dump')) {
-    software_paths$'fasterq_dump' <- get_software_path("fasterq_dump", "sra-tools", required=TRUE)
-    if(is.null(software_paths$'fasterq_dump')) {
+  if (is.null(software_paths$"fasterq_dump")) {
+    software_paths$"fasterq_dump" <- get_software_path("fasterq_dump", "sra-tools", required = TRUE)
+    if (is.null(software_paths$"fasterq_dump")) {
       cli::cli_abort("Cannot find {.val fasterq-dump} for SRA conversion.")
     }
   }
 
-  # fasterq-dump options: -p (progress), -S (split files), --include-technical, -e threads, -O output dir
-  # Input path should be the SRA file itself.
-  fastq_dump_args <- c(
-    "-p",
-    "-S",
-    "--include-technical", # Include technical reads (like barcodes/UMIs if present)
-    "-e", as.character(threads),
-    "-O", output_dir,
-    sra_file # Input SRA file path
-  )
-
-  # Create output dir if it doesn't exist
   fs::dir_create(output_dir)
 
-  # Clean up temporary files fasterq-dump might leave
-  on.exit({
-    temp_dump_files <- fs::dir_ls(path = output_dir, glob = "fasterq.tmp*", type = "any")
-    if(length(temp_dump_files) > 0) {
-      cli::cli_inform("Cleaning up temporary fasterq-dump files...")
-      fs::file_delete(temp_dump_files)
+  fastq_dump_args <- c(
+    "-p", "-S", "--include-technical",
+    "-e", as.character(threads),
+    "-O", output_dir,
+    sra_file
+  )
+
+  on.exit(
+    {
+      temp_dump_files <- fs::dir_ls(path = output_dir, glob = "fasterq.tmp*", type = "any")
+      if (length(temp_dump_files) > 0) {
+        cli::cli_inform("Cleaning up temporary fasterq-dump files...")
+        fs::file_delete(temp_dump_files)
+      }
+    },
+    add = TRUE
+  )
+
+  tryCatch(
+    {
+      run_command(software_paths$"fasterq_dump", args = fastq_dump_args, spinner = TRUE)
+    },
+    error = function(e) {
+      cli::cli_abort("fasterq-dump failed for {.val {run_id}}.")
     }
-  }, add = TRUE)
+  )
 
-  tryCatch({
-    run_command(software_paths$'fasterq_dump', args = fastq_dump_args, spinner = TRUE)
-  }, error = function(e) {
-    # Error already printed by run_command, just re-throw to stop execution
-    cli::cli_abort("fasterq-dump failed for {.val {run_id}}.")
-  })
-
-  # Find the generated FASTQ files
-  # Common patterns: {run_id}.fastq, {run_id}_1.fastq, {run_id}_2.fastq, {run_id}_3.fastq etc.
-  generated_files <- fs::dir_ls(path = output_dir, glob = paste0(run_id, "*.fastq"))
+  generated_files <- fs::dir_ls(
+    path = output_dir,
+    regexp = fastq_pattern
+  )
 
   if (length(generated_files) == 0) {
     cli::cli_alert_warning("fasterq-dump ran but no FASTQ files found for {.val {run_id}} in {.path {output_dir}}.")
@@ -63,7 +107,6 @@ convert_sra_to_fastq <- function(sra_file, output_dir = ".", threads = 8, softwa
   return(generated_files)
 }
 
-
 #' Compress FASTQ files using pigz
 #'
 #' @param fastq_files Character vector of FASTQ file paths.
@@ -72,65 +115,61 @@ convert_sra_to_fastq <- function(sra_file, output_dir = ".", threads = 8, softwa
 #' @param software_paths Paths to tools (esp. pigz).
 #' @return Character vector of compressed file paths (.fastq.gz).
 #' @keywords internal
-compress_fastq <- function(fastq_files, threads = 8, remove_original = TRUE, software_paths) {
-  if (length(fastq_files) == 0) return(character())
-
-  cli::cli_alert_info("Compressing {length(fastq_files)} FASTQ file(s) using {.val pigz}...")
+#' Compress FASTQ files using pigz
+#'
+#' @param fastq_files Character vector of FASTQ file paths (.fastq).
+#' @param threads Number of threads.
+#' @param software_paths Named list of software paths, especially `pigz`.
+#' @return Character vector of successfully compressed file paths (.fastq.gz).
+#' @keywords internal
+compress_fastq <- function(fastq_files, threads = 8, software_paths) {
+  if (length(fastq_files) == 0) {
+    return(character())
+  }
 
   if (is.null(software_paths$pigz)) {
-    software_paths$pigz <- get_software_path("pigz", "pigz", required=TRUE)
-    if(is.null(software_paths$pigz)) {
+    software_paths$pigz <- get_software_path("pigz", "pigz", required = TRUE)
+    if (is.null(software_paths$pigz)) {
       cli::cli_abort("Cannot find {.val pigz} for compression.")
     }
   }
 
-  pigz_args <- c(
-    "-p", as.character(threads)
-    # pigz defaults to compressing files in place and removing originals unless -k is used
-    # If remove_original is FALSE, add -k
-    # However, pigz -k doesn't work well when providing multiple files?
-    # Best to run pigz individually per file if -k is needed.
-    # If remove_original is TRUE (default), running on multiple files is fine.
-  )
-
+  # Determine which files still need compression
   compressed_files <- paste0(fastq_files, ".gz")
-  success_flags <- rep(TRUE, length(fastq_files))
+  needs_compression <- !fs::file_exists(compressed_files)
+  files_to_compress <- fastq_files[needs_compression]
+  compressed_to_check <- compressed_files[needs_compression]
 
-  if(remove_original) {
-    # Run pigz on all files at once if removing originals
-    tryCatch({
-      run_command(software_paths$pigz, args = c(pigz_args, fastq_files), spinner = TRUE)
-      # Verify compressed files exist and originals are gone
-      if(!all(fs::file_exists(compressed_files)) || any(fs::file_exists(fastq_files))) {
-        cli::cli_warn("pigz compression might have had issues (files missing/originals remain).")
-        # Attempt to determine which failed? Difficult. Assume all might be suspect.
-        success_flags <- fs::file_exists(compressed_files) # Mark only existing gz as success
+  if (length(files_to_compress) == 0) {
+    cli::cli_alert_info("All FASTQ files are already compressed. Skipping.")
+    return(compressed_files)
+  }
+
+  cli::cli_alert_info("Compressing {length(files_to_compress)} FASTQ file(s) using {.val pigz}...")
+
+  success_flags <- rep(TRUE, length(files_to_compress))
+
+  tryCatch(
+    {
+      run_command(software_paths$pigz, args = c("-p", as.character(threads), files_to_compress), spinner = TRUE)
+
+      # Confirm results
+      if (!all(fs::file_exists(compressed_to_check))) {
+        cli::cli_warn("Some compressed files were not created. Possible pigz failure.")
+        success_flags <- fs::file_exists(compressed_to_check)
       } else {
         cli::cli_alert_success("Successfully compressed FASTQ files.")
       }
-    }, error = function(e) {
+    },
+    error = function(e) {
       cli::cli_alert_danger("pigz compression failed.")
-      success_flags <- rep(FALSE, length(fastq_files)) # Mark all as failed
-    })
-
-  } else {
-    # Run pigz individually with -k if keeping originals
-    pigz_args <- c(pigz_args, "-k")
-    for(i in seq_along(fastq_files)) {
-      cli::cli_inform("Compressing: {.path {fastq_files[i]}} -> {.path {compressed_files[i]}}")
-      tryCatch({
-        run_command(software_paths$pigz, args = c(pigz_args, fastq_files[i]), spinner = FALSE)
-        if(!fs::file_exists(compressed_files[i])) stop("Compressed file not created.")
-      }, error = function(e) {
-        cli::cli_alert_danger("pigz compression failed for {.path {fastq_files[i]}}.")
-        success_flags[i] <- FALSE
-      })
+      success_flags <<- rep(FALSE, length(files_to_compress))
     }
-    if(all(success_flags)) cli::cli_alert_success("Successfully compressed FASTQ files (originals kept).")
-  }
+  )
 
-
-  return(compressed_files[success_flags]) # Return paths of successfully compressed files
+  # Return only successful compressed files (both newly and previously existing)
+  final_success <- fs::file_exists(compressed_files)
+  return(compressed_files[final_success])
 }
 
 
@@ -148,43 +187,49 @@ compress_fastq <- function(fastq_files, threads = 8, remove_original = TRUE, sof
 #' @param remove_originals Remove original run-level FASTQ files after merging?
 #' @keywords internal
 merge_fastq_files <- function(accession, metadata_file, source, merge_level, output_dir = ".", is_gzipped = TRUE, remove_originals = TRUE) {
-
   cli::cli_alert_info("Merging FASTQ files for {.val {accession}} at the {.val {merge_level}} level...")
 
   # Read metadata
-  meta <- tryCatch({
-    if (source == "GSA") {
-      readr::read_csv(metadata_file, show_col_types = FALSE, guess_max=10000)
-    } else { # ENA/SRA TSV
-      readr::read_tsv(metadata_file, show_col_types = FALSE, guess_max=10000)
+  meta <- tryCatch(
+    {
+      if (source == "GSA") {
+        readr::read_csv(metadata_file, show_col_types = FALSE, guess_max = 10000)
+      } else { # ENA/SRA TSV
+        readr::read_tsv(metadata_file, show_col_types = FALSE, guess_max = 10000)
+      }
+    },
+    error = function(e) {
+      cli::cli_abort("Failed to read metadata file {.path {metadata_file}} for merging: {e$message}")
     }
-  }, error = function(e) {
-    cli::cli_abort("Failed to read metadata file {.path {metadata_file}} for merging: {e$message}")
-  })
+  )
 
   # Identify grouping column and ID prefix based on source and merge level
   grouping_col <- NULL
   id_prefix <- NULL # Expected prefix for the group ID (e.g., SRX, SAMEA)
-  run_col <- NULL    # Column containing the run ID (e.g., SRR, CRR)
+  run_col <- NULL # Column containing the run ID (e.g., SRR, CRR)
 
   if (source == "ENA/SRA") {
     run_col <- "run_accession"
     grouping_col <- switch(merge_level,
-                           "ex" = "experiment_accession", # SRX, ERX, DRX
-                           "sa" = "sample_accession",     # SAMEA, SAMN, SAMD, ERS, DRS
-                           "st" = "study_accession"       # PRJNA, PRJEB, PRJD, SRP, ERP, DRP
-                           # Add secondary accessions if needed? e.g. secondary_sample_accession
+      "ex" = "experiment_accession", # SRX, ERX, DRX
+      "sa" = "sample_accession", # SAMEA, SAMN, SAMD, ERS, DRS
+      "st" = "study_accession" # PRJNA, PRJEB, PRJD, SRP, ERP, DRP
+      # Add secondary accessions if needed? e.g. secondary_sample_accession
     )
     # Prefixes are more complex for ENA/SRA due to multiple types per level
     # We might just group by the value in the column directly.
   } else { # GSA
     run_col <- "Run" # Check actual GSA CSV header
     grouping_col <- switch(merge_level,
-                           "ex" = "Experiment", # CRX
-                           "sa" = "Sample",     # SAMC
-                           "st" = "BioProject"  # PRJCA, CRA
+      "ex" = "Experiment", # CRX
+      "sa" = "Sample", # SAMC
+      "st" = "BioProject" # PRJCA, CRA
     )
-    id_prefix <- switch(merge_level, "ex" = "CRX", "sa" = "SAMC", "st" = "PRJC|CRA")
+    id_prefix <- switch(merge_level,
+      "ex" = "CRX",
+      "sa" = "SAMC",
+      "st" = "PRJC|CRA"
+    )
   }
 
   if (is.null(grouping_col) || !grouping_col %in% names(meta)) {
@@ -245,7 +290,7 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
       # se_file <- run_files[stringr::str_detect(fs::path_file(run_files), file_suffix %R% "$") &
       #                        !stringr::str_detect(fs::path_file(run_files), "_[12]" %R% file_suffix %R% "$")]
       se_file <- run_files[stringr::str_detect(fs::path_file(run_files), pattern_se_end) &
-                              !stringr::str_detect(fs::path_file(run_files), pattern_se_not_12)]
+        !stringr::str_detect(fs::path_file(run_files), pattern_se_not_12)]
       # Other files (e.g., _3, _I1, etc.) - treat as single-end for now? Or handle separately?
       other_files <- run_files[!run_files %in% c(r1_file, r2_file, se_file)]
 
@@ -268,7 +313,9 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
 
     # Perform the merge using `cat` via system2 (safer for large files)
     perform_merge <- function(input_files, output_file) {
-      if (length(input_files) == 0) return(FALSE)
+      if (length(input_files) == 0) {
+        return(FALSE)
+      }
       if (length(input_files) == 1) {
         cli::cli_inform("Only one file for group {.val {group_id}} ({output_file}), renaming {.path {input_files[1]}} -> {.path {output_file}}")
         fs::file_move(input_files[1], output_file)
@@ -307,13 +354,16 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
       # Construct command. Redirection needs careful handling.
       # Let processx handle redirection.
       # This writes stdout to the output file.
-      res <- tryCatch({
-        processx::run("cat", args = input_files, stdout = output_file, error_on_status = FALSE, spinner = FALSE, echo_cmd = TRUE)
-      }, error = function(e) {
-        cli::cli_status_clear(id)
-        cli::cli_alert_danger("Failed to run cat command: {e$message}")
-        return(NULL)
-      })
+      res <- tryCatch(
+        {
+          processx::run("cat", args = input_files, stdout = output_file, error_on_status = FALSE, spinner = FALSE, echo_cmd = TRUE)
+        },
+        error = function(e) {
+          cli::cli_status_clear(id)
+          cli::cli_alert_danger("Failed to run cat command: {e$message}")
+          return(NULL)
+        }
+      )
 
       cli::cli_status_clear(id)
 
@@ -335,7 +385,7 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
     if (length(files_to_merge_r1) > 0) {
       merged_r1_file <- fs::path(output_dir, paste0(group_id, "_1", file_suffix))
       # Check if target exists and skip?
-      if(fs::file_exists(merged_r1_file)) {
+      if (fs::file_exists(merged_r1_file)) {
         cli::cli_alert_warning("Merged file already exists, skipping: {.path {merged_r1_file}}")
       } else {
         if (perform_merge(files_to_merge_r1, merged_r1_file)) {
@@ -349,7 +399,7 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
     # Merge R2 files if any (only if R1 merge was attempted/successful)
     if (length(files_to_merge_r2) > 0 && merge_successful) {
       merged_r2_file <- fs::path(output_dir, paste0(group_id, "_2", file_suffix))
-      if(fs::file_exists(merged_r2_file)) {
+      if (fs::file_exists(merged_r2_file)) {
         cli::cli_alert_warning("Merged file already exists, skipping: {.path {merged_r2_file}}")
       } else {
         if (perform_merge(files_to_merge_r2, merged_r2_file)) {
@@ -370,7 +420,7 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
       # Avoid overwriting if only R1 existed and was renamed to this name
       is_renamed_r1 <- length(files_to_merge_r1) == 1 && length(files_to_merge_r2) == 0 && length(files_to_merge_se) == 0
 
-      if(fs::file_exists(merged_se_file) && !is_renamed_r1) {
+      if (fs::file_exists(merged_se_file) && !is_renamed_r1) {
         cli::cli_alert_warning("Merged file already exists, skipping: {.path {merged_se_file}}")
       } else if (!is_renamed_r1) {
         if (perform_merge(files_to_merge_se, merged_se_file)) {
@@ -389,7 +439,7 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
       # Exclude files that are identical to the merged output (in case of single-file rename)
       files_to_remove <- files_to_remove[!files_to_remove %in% merged_files_list]
 
-      if(length(files_to_remove) > 0) {
+      if (length(files_to_remove) > 0) {
         cli::cli_inform("Removing {length(files_to_remove)} original run file(s) for group {.val {group_id}}...")
         fs::file_delete(files_to_remove)
       }
@@ -400,5 +450,3 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
     }
   } # End loop over groups
 }
-
-

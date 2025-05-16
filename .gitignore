@@ -4,3 +4,5 @@
 .Ruserdata
 dev
 .Rprofile
+.lintr
+.cursorignore

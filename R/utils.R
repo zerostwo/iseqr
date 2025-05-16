@@ -67,24 +67,27 @@ run_command <- function(command, args = character(), error_on_status = TRUE, spi
   show_spinner <- spinner && interactive() && is.null(list(...)$stdout) && is.null(list(...)$stderr)
 
   id <- NULL
-  if(show_spinner) id <- cli::cli_status("Running {.file {command_name}}...")
+  if (show_spinner) id <- cli::cli_status("Running {.file {command_name}}...")
 
-  res <- tryCatch({
-    processx::run(
-      command = command,
-      args = args,
-      error_on_status = FALSE, # Check status manually for better error message
-      echo_cmd = FALSE,       # We print it ourselves
-      echo = FALSE,           # Don't echo output by default
-      spinner = FALSE,        # Use cli spinner instead
-      ...
-    )
-  }, error = function(e) {
-    if(!is.null(id)) cli::cli_status_clear(id)
-    cli::cli_abort("Failed to execute {.file {command_name}}: {e$message}")
-  })
+  res <- tryCatch(
+    {
+      processx::run(
+        command = command,
+        args = args,
+        error_on_status = FALSE, # Check status manually for better error message
+        echo_cmd = FALSE, # We print it ourselves
+        echo = FALSE, # Don't echo output by default
+        spinner = FALSE, # Use cli spinner instead
+        ...
+      )
+    },
+    error = function(e) {
+      if (!is.null(id)) cli::cli_status_clear(id)
+      cli::cli_abort("Failed to execute {.file {command_name}}: {e$message}")
+    }
+  )
 
-  if(!is.null(id)) cli::cli_status_clear(id)
+  if (!is.null(id)) cli::cli_status_clear(id)
 
   if (error_on_status && res$status != 0) {
     cli::cli_abort(c(
