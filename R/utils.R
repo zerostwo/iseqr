@@ -100,7 +100,6 @@ run_command <- function(command, args = character(), error_on_status = TRUE, spi
   return(res)
 }
 
-
 #' Check File Existence and Size
 #'
 #' @param file_path Path to the file.

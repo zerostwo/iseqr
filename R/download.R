@@ -184,7 +184,8 @@ download_ena_sra_run <- function(run_id, run_info, download_fastq_gz = TRUE, use
       # Ensure ftp and aspera links correspond if possible (e.g., same number)
       if (length(fastq_aspera_links) != length(fastq_ftp_links)) {
         cli::cli_alert_warning(
-          "Mismatch between number of FTP ({length(fastq_ftp_links)}) and Aspera ({length(fastq_aspera_links)}) FASTQ links for {.val {run_id}}. Preferring FTP.")
+          "Mismatch between number of FTP ({length(fastq_ftp_links)}) and Aspera ({length(fastq_aspera_links)}) FASTQ links for {.val {run_id}}. Preferring FTP."
+        )
         fastq_aspera_links <- NULL # Fallback to FTP
       }
     } else {

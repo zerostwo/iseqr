@@ -4,26 +4,28 @@
 \alias{compress_fastq}
 \title{Compress FASTQ files using pigz}
 \usage{
-compress_fastq(
-  fastq_files,
-  threads = 8,
-  remove_original = TRUE,
-  software_paths
-)
+compress_fastq(fastq_files, threads = 8, software_paths)
 }
 \arguments{
-\item{fastq_files}{Character vector of FASTQ file paths.}
+\item{fastq_files}{Character vector of FASTQ file paths (.fastq).}
 
 \item{threads}{Number of threads.}
 
-\item{remove_original}{Remove original FASTQ after compression?}
+\item{software_paths}{Named list of software paths, especially \code{pigz}.}
 
-\item{software_paths}{Paths to tools (esp. pigz).}
+\item{remove_original}{Remove original FASTQ after compression?}
 }
 \value{
 Character vector of compressed file paths (.fastq.gz).
+
+Character vector of successfully compressed file paths (.fastq.gz).
 }
 \description{
 Compress FASTQ files using pigz
 }
+\keyword{Compress}
+\keyword{FASTQ}
+\keyword{files}
 \keyword{internal}
+\keyword{pigz}
+\keyword{using}

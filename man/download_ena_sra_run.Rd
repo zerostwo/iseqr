@@ -33,7 +33,8 @@ download_ena_sra_run(
 \item{software_paths}{Paths to tools.}
 }
 \value{
-A list containing paths to downloaded files (or the SRA file path). Keys: \code{files}, \code{type} ("fastq_gz", "sra").
+A list containing paths to downloaded files (or the SRA file path).
+Keys: \code{files}, \code{type} ("fastq_gz", "sra").
 }
 \description{
 Handles logic for downloading FASTQ or SRA, using FTP/HTTPS/Aspera.

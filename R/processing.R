@@ -1,16 +1,25 @@
 # --- Post-processing Functions (processing.R) ---
 
 # Count lines in a file (FASTQ, possibly gzipped)
-count_lines <- function(file) {
-  if (grepl("\\.gz$", file)) {
-    as.integer(system2("zcat", shQuote(file), stdout = TRUE) |> length())
-  } else {
-    system2("wc", c("-l", shQuote(file)), stdout = TRUE) |>
-      strsplit("\\s+") |>
-      unlist() |>
-      (\(x) x[1])() |>
-      as.integer()
+count_lines <- function(file, threads = 8) {
+  if (!file.exists(file)) {
+    cli::cli_abort("File not found: {.file {file}}")
   }
+
+  if (grepl("\\.gz$", file)) {
+    # pigz decompress to stdout, pipe to wc -l
+    cmd <- sprintf("pigz -dc -p %d %s | wc -l", threads, shQuote(file))
+  } else {
+    # plain text file
+    cmd <- sprintf("wc -l < %s", shQuote(file))
+  }
+
+  output <- tryCatch(
+    system(cmd, intern = TRUE),
+    error = function(e) cli::cli_abort("Error while counting lines: {e$message}")
+  )
+
+  as.integer(trimws(output))
 }
 
 # Check all files are multiple of 4 and have equal line count
@@ -29,7 +38,7 @@ check_fastq_integrity <- function(files) {
 #' @param software_paths Paths to tools (esp. fasterq-dump).
 #' @return Character vector of generated FASTQ file paths.
 #' @keywords internal
-convert_sra_to_fastq <- function(sra_file, output_dir = ".", threads = 8, software_paths) {
+convert_sra_to_fastq <- function(sra_file, output_dir = dirname(sra_file), threads = 8, software_paths) {
   run_id <- fs::path_ext_remove(fs::path_file(sra_file))
   cli::cli_alert_info("Checking existing FASTQ for {.val {run_id}}...")
 
@@ -250,7 +259,7 @@ merge_fastq_files <- function(accession, metadata_file, source, merge_level, out
   file_suffix <- if (is_gzipped) ".fastq.gz" else ".fastq"
 
   # Process each group
-  for (i in 1:nrow(grouped_runs)) {
+  for (i in seq_len(nrow(grouped_runs))) {
     group_id <- grouped_runs$group_id[i]
     runs_in_group <- grouped_runs$runs[[i]]
 
